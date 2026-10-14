@@ -1,0 +1,214 @@
+STORE-210 step B5: acceptance tests written BEFORE the implementation (red output)
+Date: 2026-10-13. Real output from this machine; the raw logs follow the mapping.
+
+Commands
+  go build ./... ; go vet ./... ; gofmt -l .                     -> all clean (tests compile)
+  go test -race -count=1 -skip 'TestQuota|TestContractSTORE210|TestOpenAPIDocumentsExactlyTheRouterRoutes' ./...
+                                                                 -> every OLD test passes (10 packages ok)
+  go test -race -count=1 -run 'TestQuota|TestContractSTORE210|TestOpenAPIDocumentsExactlyTheRouterRoutes' ./...
+                                                                 -> 27 FAIL (21 new acceptance + 5 B3 contract + 1 route coverage)
+  cd web; npm run lint; npm run typecheck                        -> clean
+  cd web; npx playwright test                                    -> 15 passed (all old), 16 failed (all new, e2e/quota.spec.ts)
+
+The full CI (scripts/ci.ps1) is EXPECTED to be red after this step: the go test
+stage and the e2e stage fail on these tests until steps B6-B8 implement them.
+
+Why each failure is the EXPECTED one (not a typo or a compile error)
+- "404 no such route": the router does not serve the STORE-210 routes yet; the
+  helper contractNotImplemented() turns exactly that answer into one clear line.
+- "no tenant_usage table (migration 6 not implemented yet)": the migration of B6
+  does not exist; checked with sqlite_master, not guessed.
+- AC-API-9 stored/replica bytes: this is intake finding F1, reproduced by the test
+  (primary keeps raw JSON, replica stores Go's HTML-escaped re-encoding).
+- Playwright "region 'Storage usage' not found": the console feature of B8 does
+  not exist. Tests against the real server first fail in their setup call
+  (api.setFlag / api.usage), whose error names the missing route.
+
+Mapping: test -> AC -> observed failure
+---------------------------------------------------------------------------------------------------------
+Go, internal/api/quota_acceptance_test.go
+  TestQuota_AC01_KeyLimit                          AC-API-1   404 GET /v1/flags (route missing)
+  TestQuota_AC02_ByteLimitAndOverwriteDelta        AC-API-2   404 GET /v1/flags
+  TestQuota_AC03_ConcurrentCreatesNearKeyLimit     AC-API-3   404 GET /v1/flags   (100 concurrent writers)
+  TestQuota_AC03_ConcurrentCreatesNearByteLimit    AC-API-3   404 GET /v1/flags   (100 concurrent writers)
+  TestQuota_AC03_ConcurrentMixedWritesKeepInvariant AC-API-3  404 GET /v1/flags   (100 concurrent mixed writes)
+  TestQuota_AC04_ReadUsageIsolatedPerTenant        AC-API-4   404 GET /v1/usage
+  TestQuota_AC05_QuotaEditCAS                      AC-API-5   404 GET /v1/admin/tenants/{id}/quota
+  TestQuota_AC06_DefaultQuota                      AC-API-6   404 GET /v1/admin/tenants/{id}/quota
+  TestQuota_AC07_IdempotencyNeverDoubleCounts      AC-API-7   404 GET /v1/flags
+  TestQuota_AC08_SurvivesRestart                   AC-API-8   404 GET /v1/flags
+  TestQuota_AC09_CanonicalStorageAndByteCount      AC-API-9   stored value not canonical; GET HTML-escapes <,>,&; then 404 /v1/usage
+  TestQuota_AC11_FlagOffCountsButDoesNotReject     AC-API-11  404 GET /v1/admin/tenants/{id}/quota
+  TestQuota_AC11_ToggleUnderConcurrentLoad         AC-API-11  404 GET /v1/admin/tenants/{id}/quota
+  TestQuotaMetrics                                 spec 9     404 GET /v1/flags
+Go, internal/verify/quota_acceptance_test.go (real primary + replica)
+  TestQuota_AC10_ReplicaServesQuotaStateAndVerifies       AC-API-10  404 GET /v1/flags
+  TestQuota_AC10_VerifyReportsUsageAndQuotaDifferences    AC-API-10  404 GET /v1/admin/tenants/1/quota
+  TestQuota_AC09_CanonicalBytesReplicateIdentically       AC-API-9   F1: primary and replica store different bytes; verify reports key_mismatch
+Go, cmd/storecraft/quota_acceptance_test.go (real processes)
+  TestQuota_AC12_V1BinaryOnMigratedDatabase        AC-API-12  no tenant_usage table (migration 6 missing)
+  TestQuota_AC13_BackfillIsCorrectIdempotentAndResumable AC-API-13 no tenant_usage table (migration 6 missing)
+  TestQuota_AC06_SeededTenantsGetTheDefaultQuota   AC-API-6   404 GET /v1/admin/tenants/{id}/quota
+  TestQuota_BackfillDuringLiveWrites               plan R3/Rev2-4 no tenant_usage table
+Go, from step B3 (contract, still red as intended)
+  TestContractSTORE210_GetUsage / _ListAndGetTenants / _QuotaCAS / _Flags / _QuotaExceededEnvelope   spec 4  404 no such route
+  TestOpenAPIDocumentsExactlyTheRouterRoutes       contract   7 operations documented but not served
+Playwright, web/e2e/quota.spec.ts (real Go server + Vite)
+  AC-UI-1 normal / loading-error-retry / unlimited / near limit / over quota   AC-UI-1  region "Storage usage" not found
+  AC-UI-2 meter follows other clients within 2 s                               AC-UI-2  api.setFlag: GET /v1/flags 404
+  AC-UI-3 editor stays open + message from details                             AC-UI-3  api.setFlag: 404
+  AC-UI-3 message from code, not text; forbidden differs                       AC-UI-3  api.setFlag: 404
+  AC-UI-4 admin quota editor                                                   AC-UI-4  api.setFlag: 404
+  AC-UI-5 conflict: Cancel/Esc/focus; Reload/Overwrite                         AC-UI-5  api.setFlag: 404
+  AC-UI-6 flag hides/shows live in every console                               AC-UI-6  api.setFlag: 404
+  AC-UI-7 toggle with confirmation + If-Match; stale toggle 412                AC-UI-7  api.setFlag: 404
+  AC-UI-8 keyboard-only editor + axe (admin, keys page)                        AC-UI-8  api.setFlag: 404
+  (axe checks for near-limit, over-quota, editor and conflict dialog are inside the AC-UI-1/3/5 tests)
+
+=========================================================================================================
+Raw: every failing Go test with its first failure line
+TestQuota_AC12_V1BinaryOnMigratedDatabase :: quota_acceptance_test.go:246: STORE-210: this build's migrations create no tenant_usage table (migration 6 not implemented yet)
+TestQuota_AC13_BackfillIsCorrectIdempotentAndResumable :: quota_acceptance_test.go:348: STORE-210: this build's migrations create no tenant_usage table (migration 6 not implemented yet)
+TestQuota_AC06_SeededTenantsGetTheDefaultQuota :: quota_acceptance_test.go:406: seeded tenant 1 quota: 404 {"error":{"code":"not_found","message":"no such route"}}
+TestQuota_BackfillDuringLiveWrites :: quota_acceptance_test.go:415: STORE-210: this build's migrations create no tenant_usage table (migration 6 not implemented yet)
+TestContractSTORE210_GetUsage :: contract_store210_test.go:71: STORE-210 contract: GET /v1/usage is not implemented yet (404 no such route)
+TestContractSTORE210_ListAndGetTenants :: contract_store210_test.go:105: STORE-210 contract: GET /v1/admin/tenants is not implemented yet (404 no such route)
+TestContractSTORE210_QuotaCAS :: contract_store210_test.go:148: STORE-210 contract: GET /v1/admin/tenants/{id}/quota is not implemented yet (404 no such route)
+TestContractSTORE210_Flags :: contract_store210_test.go:199: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestContractSTORE210_QuotaExceededEnvelope :: contract_store210_test.go:239: STORE-210 contract: PUT /v1/admin/flags/quota_enforcement is not implemented yet (404 no such route)
+TestOpenAPIDocumentsExactlyTheRouterRoutes :: openapi_test.go:105: operation "GET /v1/admin/tenants" is documented in api/openapi.yaml but not served by the router
+TestQuota_AC01_KeyLimit :: quota_acceptance_test.go:261: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC02_ByteLimitAndOverwriteDelta :: quota_acceptance_test.go:292: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC03_ConcurrentCreatesNearKeyLimit :: quota_acceptance_test.go:336: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC03_ConcurrentCreatesNearByteLimit :: quota_acceptance_test.go:358: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC03_ConcurrentMixedWritesKeepInvariant :: quota_acceptance_test.go:380: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC04_ReadUsageIsolatedPerTenant :: quota_acceptance_test.go:417: STORE-210 contract: GET /v1/usage is not implemented yet (404 no such route)
+TestQuota_AC05_QuotaEditCAS :: quota_acceptance_test.go:465: STORE-210 contract: GET /v1/admin/tenants/{id}/quota is not implemented yet (404 no such route)
+TestQuota_AC06_DefaultQuota :: quota_acceptance_test.go:519: STORE-210 contract: GET /v1/admin/tenants/{id}/quota is not implemented yet (404 no such route)
+TestQuota_AC07_IdempotencyNeverDoubleCounts :: quota_acceptance_test.go:540: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC08_SurvivesRestart :: quota_acceptance_test.go:613: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC09_CanonicalStorageAndByteCount :: quota_acceptance_test.go:655: ws: stored "{ \"b\" : 1 , \"a\" : [ 1 , 2.50 , 1e3 ] }", want canonical "{\"b\":1,\"a\":[1,2.50,1e3]}"
+TestQuota_AC11_FlagOffCountsButDoesNotReject :: quota_acceptance_test.go:678: STORE-210 contract: GET /v1/admin/tenants/{id}/quota is not implemented yet (404 no such route)
+TestQuota_AC11_ToggleUnderConcurrentLoad :: quota_acceptance_test.go:703: STORE-210 contract: GET /v1/admin/tenants/{id}/quota is not implemented yet (404 no such route)
+TestQuotaMetrics :: quota_acceptance_test.go:764: STORE-210 contract: GET /v1/flags is not implemented yet (404 no such route)
+TestQuota_AC10_ReplicaServesQuotaStateAndVerifies :: quota_acceptance_test.go:79: GET /v1/flags: status 404, want 200 ({"error":{"code":"not_found","message":"no such route"}}
+TestQuota_AC10_VerifyReportsUsageAndQuotaDifferences :: quota_acceptance_test.go:155: GET /v1/admin/tenants/1/quota: status 404, want 200 ({"error":{"code":"not_found","message":"no such route"}}
+TestQuota_AC09_CanonicalBytesReplicateIdentically :: quota_acceptance_test.go:216: html: primary stores "\"<b>Tom & Jerry</b>\"", replica stores "\"\\u003cb\\u003eTom \\u0026 Jerry\\u003c/b\\u003e\""
+
+FAIL	storecraft/cmd/storecraft	11.491s
+FAIL	storecraft/internal/api	9.113s
+ok  	storecraft/internal/auth	3.063s [no tests to run]
+ok  	storecraft/internal/feed	5.232s [no tests to run]
+ok  	storecraft/internal/metrics	3.268s [no tests to run]
+ok  	storecraft/internal/metrics/metricstest	3.208s [no tests to run]
+ok  	storecraft/internal/replica	6.936s [no tests to run]
+ok  	storecraft/internal/store	5.154s [no tests to run]
+FAIL	storecraft/internal/verify	6.662s
+
+Raw: old Go tests (new ones skipped), go test -race -count=1
+ok cmd/storecraft, internal/api, internal/auth, internal/feed, internal/metrics, internal/metrics/metricstest, internal/replica, internal/store, internal/verify (internal/clustertest has no test files)
+
+Raw: Playwright run (list reporter)
+  ✓   1 [chromium] › e2e\conflict.spec.ts:16:1 › a conflicting save shows both values; Overwrite saves mine on top of the latest (1.6s)
+  ✓   2 [chromium] › e2e\conflict.spec.ts:36:1 › Reload continues editing from the latest value; Cancel keeps my text (1.2s)
+  ✓   3 [chromium] › e2e\keys.spec.ts:3:1 › create, edit and delete a key through the console (1.4s)
+  ✓   4 [chromium] › e2e\keys.spec.ts:36:1 › invalid JSON is caught in the form and nothing is sent (874ms)
+  ✓   5 [chromium] › e2e\live.spec.ts:3:1 › changes from a second browser window appear live, in both directions (3.1s)
+  ✓   6 [chromium] › e2e\live.spec.ts:42:1 › a write made directly through the API appears live (2.1s)
+  ✓   7 [chromium] › e2e\live.spec.ts:57:1 › another tenant's changes never appear (2.0s)
+  ✓   8 [chromium] › e2e\login.spec.ts:5:3 › sign in › a tenant signs in and lands on the keys page, which stays after a refresh (2.1s)
+  ✓   9 [chromium] › e2e\login.spec.ts:17:3 › sign in › choosing the wrong role explains the mix-up and does not sign in (622ms)
+  ✓  10 [chromium] › e2e\login.spec.ts:26:3 › sign in › an admin sees the replication status badge (778ms)
+  ✓  11 [chromium] › e2e\login.spec.ts:35:3 › accessibility (axe) › the login page has no violations (1.4s)
+  ✓  12 [chromium] › e2e\login.spec.ts:42:3 › accessibility (axe) › the keys page, with data and with the editor open, has no violations (2.3s)
+  ✓  13 [chromium] › e2e\login.spec.ts:55:3 › accessibility (axe) › the admin page has no violations (1.5s)
+  ✘  14 [chromium] › e2e\quota.spec.ts:46:3 › AC-UI-1 usage meter states › normal: text and an accessible meter for keys and bytes (10.7s)
+  ✘  15 [chromium] › e2e\quota.spec.ts:60:3 › AC-UI-1 usage meter states › loading, then error with Try again, then the real numbers (10.9s)
+  ✘  16 [chromium] › e2e\quota.spec.ts:85:3 › AC-UI-1 usage meter states › unlimited: the word "unlimited" and no meter value (11.0s)
+  ✘  17 [chromium] › e2e\quota.spec.ts:94:3 › AC-UI-1 usage meter states › near limit at 80% or more: "Almost full" in text (10.9s)
+  ✘  18 [chromium] › e2e\quota.spec.ts:102:3 › AC-UI-1 usage meter states › over quota: "Over quota" in text (10.9s)
+  ✘  19 [chromium] › e2e\quota.spec.ts:111:1 › AC-UI-2 the meter follows other clients within 2 seconds, without a reload (354ms)
+  ✘  20 [chromium] › e2e\quota.spec.ts:133:3 › AC-UI-3 over quota at save › the editor stays open with my text and explains the limit from the error details (321ms)
+  ✘  21 [chromium] › e2e\quota.spec.ts:158:3 › AC-UI-3 over quota at save › the message comes from the error code, not the server text; forbidden reads differently (317ms)
+  ✘  22 [chromium] › e2e\quota.spec.ts:192:3 › AC-UI-4 admin quota editor › shows quota and usage, rejects invalid input without sending, saves with If-Match (321ms)
+  ✘  23 [chromium] › e2e\quota.spec.ts:233:3 › AC-UI-5 quota editor conflict › shows both sides; Cancel keeps my input and returns focus to Save; Esc cancels (319ms)
+  ✘  24 [chromium] › e2e\quota.spec.ts:259:3 › AC-UI-5 quota editor conflict › Reload loads the latest values; Overwrite saves mine on top of the latest version (312ms)
+  ✘  25 [chromium] › e2e\quota.spec.ts:276:1 › AC-UI-6 the flag hides and shows the quota feature live in every open console (54ms)
+  ✘  26 [chromium] › e2e\quota.spec.ts:305:3 › AC-UI-7 admin flag toggle › confirms with the effect, sends If-Match, and shows the new state (316ms)
+  ✘  27 [chromium] › e2e\quota.spec.ts:321:3 › AC-UI-7 admin flag toggle › a stale toggle (412) asks to reload the current state (319ms)
+  ✘  28 [chromium] › e2e\quota.spec.ts:338:3 › AC-UI-8 keyboard and accessibility › the quota editor works with the keyboard alone; the admin page is axe-clean (332ms)
+  ✘  29 [chromium] › e2e\quota.spec.ts:353:3 › AC-UI-8 keyboard and accessibility › the keys page is axe-clean with the meter shown (360ms)
+  ✓  30 [chromium] › e2e\reconnect.spec.ts:4:1 › after the server restarts, the console reconnects and keeps receiving changes (3.8s)
+  ✓  31 [chromium] › e2e\reconnect.spec.ts:30:1 › when streaming is impossible, the console falls back to polling and stays up to date (1.9s)
+    Error: expect(locator).toContainText(expected) failed
+    Error: expect(locator).toContainText(expected) failed
+    Error: expect(locator).toContainText(expected) failed
+    Error: expect(locator).toContainText(expected) failed
+    Error: expect(locator).toContainText(expected) failed
+  16 failed
+  15 passed (2.0m)
+
+Raw: first error of each failing Playwright test
+  1) [chromium] › e2e\quota.spec.ts:46:3 › AC-UI-1 usage meter states › normal: text and an accessible meter for keys and bytes 
+    Error: expect(locator).toContainText(expected) failed
+    Expected substring: "12 of 1,000 keys"
+
+  2) [chromium] › e2e\quota.spec.ts:60:3 › AC-UI-1 usage meter states › loading, then error with Try again, then the real numbers 
+    Error: expect(locator).toContainText(expected) failed
+    Expected substring: "Loading usage…"
+
+  3) [chromium] › e2e\quota.spec.ts:85:3 › AC-UI-1 usage meter states › unlimited: the word "unlimited" and no meter value 
+    Error: expect(locator).toContainText(expected) failed
+    Expected substring: "3 keys (unlimited)"
+
+  4) [chromium] › e2e\quota.spec.ts:94:3 › AC-UI-1 usage meter states › near limit at 80% or more: "Almost full" in text 
+    Error: expect(locator).toContainText(expected) failed
+    Expected substring: "850 of 1,000 keys"
+
+  5) [chromium] › e2e\quota.spec.ts:102:3 › AC-UI-1 usage meter states › over quota: "Over quota" in text 
+    Error: expect(locator).toContainText(expected) failed
+    Expected substring: "Over quota"
+
+  6) [chromium] › e2e\quota.spec.ts:111:1 › AC-UI-2 the meter follows other clients within 2 seconds, without a reload 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  7) [chromium] › e2e\quota.spec.ts:133:3 › AC-UI-3 over quota at save › the editor stays open with my text and explains the limit from the error details 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  8) [chromium] › e2e\quota.spec.ts:158:3 › AC-UI-3 over quota at save › the message comes from the error code, not the server text; forbidden reads differently 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  9) [chromium] › e2e\quota.spec.ts:192:3 › AC-UI-4 admin quota editor › shows quota and usage, rejects invalid input without sending, saves with If-Match 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  10) [chromium] › e2e\quota.spec.ts:233:3 › AC-UI-5 quota editor conflict › shows both sides; Cancel keeps my input and returns focus to Save; Esc cancels 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  11) [chromium] › e2e\quota.spec.ts:259:3 › AC-UI-5 quota editor conflict › Reload loads the latest values; Overwrite saves mine on top of the latest version 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  12) [chromium] › e2e\quota.spec.ts:276:1 › AC-UI-6 the flag hides and shows the quota feature live in every open console 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  13) [chromium] › e2e\quota.spec.ts:305:3 › AC-UI-7 admin flag toggle › confirms with the effect, sends If-Match, and shows the new state 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  14) [chromium] › e2e\quota.spec.ts:321:3 › AC-UI-7 admin flag toggle › a stale toggle (412) asks to reload the current state 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  15) [chromium] › e2e\quota.spec.ts:338:3 › AC-UI-8 keyboard and accessibility › the quota editor works with the keyboard alone; the admin page is axe-clean 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+
+  16) [chromium] › e2e\quota.spec.ts:353:3 › AC-UI-8 keyboard and accessibility › the keys page is axe-clean with the meter shown 
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}
+    Error: STORE-210 API: GET /v1/flags answered 404 {"error":{"code":"not_found","message":"no such route"}}

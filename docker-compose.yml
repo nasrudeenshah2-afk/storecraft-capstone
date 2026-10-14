@@ -1,0 +1,50 @@
+# storecraft stack: primary, read-only replica, and the console (nginx).
+#
+# Synthetic tokens only. Set them in the shell (or a local .env file) first:
+#   $env:STORECRAFT_ADMIN_TOKEN = "<synthetic admin token>"
+#   docker compose up -d --build
+#   docker compose exec primary storecraft seed -db /data/storecraft.db   # prints tenant tokens
+# Console: http://localhost:8080   Primary: http://localhost:8090   Replica: http://localhost:8091
+# Host ports can be changed with PRIMARY_PORT, REPLICA_PORT and WEB_PORT.
+# Stop: docker compose down        (add -v to also delete the data volumes)
+
+services:
+  primary:
+    build: .
+    image: storecraft:local
+    command: ["serve", "-role=primary", "-addr", ":8080", "-db", "/data/storecraft.db"]
+    environment:
+      STORECRAFT_ADMIN_TOKEN: ${STORECRAFT_ADMIN_TOKEN:?set STORECRAFT_ADMIN_TOKEN to a synthetic admin token}
+    ports:
+      - "${PRIMARY_PORT:-8090}:8080"
+    volumes:
+      - primary-data:/data
+
+  replica:
+    image: storecraft:local
+    depends_on:
+      - primary
+    command: ["serve", "-role=replica", "-primary=http://primary:8080", "-addr", ":8080", "-db", "/data/replica.db"]
+    environment:
+      # The replica's own admin token (its /metrics, status and digest).
+      STORECRAFT_ADMIN_TOKEN: ${STORECRAFT_REPLICA_ADMIN_TOKEN:-${STORECRAFT_ADMIN_TOKEN}}
+      # The primary's admin token, used to pull the admin change feed.
+      STORECRAFT_REPLICATION_TOKEN: ${STORECRAFT_ADMIN_TOKEN}
+    ports:
+      - "${REPLICA_PORT:-8091}:8080"
+    volumes:
+      - replica-data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    image: storecraft-console:local
+    depends_on:
+      - primary
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  primary-data:
+  replica-data:

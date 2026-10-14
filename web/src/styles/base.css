@@ -1,0 +1,51 @@
+/* Shared design tokens and element defaults. Component styles live in each component. */
+:root {
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --radius: 6px;
+
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-hover: #eef0f3;
+  --text: #1c2128;
+  --text-muted: #57606a;
+  --border: #d8dee4;
+  --border-strong: #8c959f;
+  --accent: #0b5cad;
+  --accent-hover: #094a8c;
+  --on-accent: #ffffff;
+  --danger: #b42318;
+  --danger-hover: #912018;
+  --success: #1a7f37;
+  --focus: #e09b00;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

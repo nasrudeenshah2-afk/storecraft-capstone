@@ -1,0 +1,1230 @@
+openapi: 3.0.3
+info:
+  title: storecraft
+  version: 0.1.0
+  description: |
+    Multi-tenant key-value service with a change feed.
+
+    Every request is authenticated with `Authorization: Bearer <token>`.
+    Tenant tokens reach the key and change routes; the admin token
+    (`STORECRAFT_ADMIN_TOKEN`) reaches only `/metrics` and the replication
+    routes (`/v1/admin/changes`, `/v1/replication/status`) and the quota admin
+    routes (`/v1/admin/tenants...`, `/v1/admin/flags/...`).
+
+    Quotas (STORE-210): each tenant has a key and a byte quota (default 1000
+    keys and 1048576 bytes). When `quota_enforcement` is on, a write that would
+    exceed a quota is rejected with 403 `quota_exceeded`. Value bytes are
+    counted in canonical form (compact JSON, no HTML escaping), the form values
+    are stored in.
+
+    A node started with `serve -role=replica` is a read-only copy of a primary:
+    reads, changes, streams and `/metrics` work, tenants use the same tokens,
+    and PUT/DELETE on keys return 409 `read_only_replica`.
+
+    Every non-2xx response has `Content-Type: application/json` and the body
+    `{"error":{"code":"...","message":"..."}}` (schema `Error`). That includes
+    requests to paths that do not exist (404 `not_found`) and requests with a
+    method a path does not support (405 `method_not_allowed` with an `Allow`
+    header). Request bodies are limited to 1 MiB.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+tags:
+  - name: keys
+  - name: changes
+  - name: operations
+  - name: replication
+  - name: quotas
+paths:
+  /v1/keys/{key}:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    put:
+      tags: [keys]
+      operationId: putKey
+      summary: Create or update a key
+      description: |
+        Without a precondition header the value is upserted and the key's
+        version is incremented (a new key starts at version 1).
+        `If-Match: <version>` performs compare-and-swap: it succeeds only if the
+        key exists at exactly that version (otherwise 412).
+        `If-None-Match: *` creates the key only if it does not exist (otherwise 412).
+        The two headers cannot be combined. Add `Idempotency-Key` to make retries
+        safe: a repeat of the same method, path and body returns the stored 2xx
+        response without writing again; the same key with a different method,
+        path or body is a 422 `idempotency_conflict`. Only 2xx responses are stored.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutRequest'
+      responses:
+        '200':
+          description: Existing key updated.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PutResponse'
+        '201':
+          description: Key created (version 1).
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PutResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrQuotaExceeded'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/ReadOnlyReplica'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+    get:
+      tags: [keys]
+      operationId: getKey
+      summary: Read a key
+      description: The response `ETag` is the key's version, quoted (for example `"3"`).
+      responses:
+        '200':
+          description: The key.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+    delete:
+      tags: [keys]
+      operationId: deleteKey
+      summary: Delete a key
+      description: |
+        Deleting a missing key is a 404. `Idempotency-Key` works as for PUT:
+        a replay returns the stored 204 and does not delete again.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Deleted.
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/ReadOnlyReplica'
+        '422':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/keys:
+    get:
+      tags: [keys]
+      operationId: listKeys
+      summary: List keys
+      description: Returns the caller's keys, sorted by key, optionally restricted to a prefix.
+      parameters:
+        - $ref: '#/components/parameters/Prefix'
+      responses:
+        '200':
+          description: Keys sorted by key (an empty array when none match).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/changes:
+    get:
+      tags: [changes]
+      operationId: listChanges
+      summary: Read the change log (long-poll)
+      description: |
+        Returns the caller's changes with `seq` greater than `since`, in
+        ascending order. If there are none, the request is held open until a
+        change arrives or the server's poll timeout (default 25 seconds,
+        `serve -poll-timeout`) passes, and then returns an empty list.
+        `last_seq` is the highest `seq` returned, or `since` if there were none;
+        pass it as the next `since`.
+      parameters:
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Changes, possibly empty after a timeout.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/changes/stream:
+    get:
+      tags: [changes]
+      operationId: streamChanges
+      summary: Stream the change log (Server-Sent Events)
+      description: |
+        Streams the caller's changes as Server-Sent Events, starting after
+        `since` (or after the `Last-Event-ID` header, which wins when both are
+        present). Each change is one event:
+
+            id: <seq>
+            event: change
+            data: <the change as one line of JSON, schema Change>
+
+        A comment line (`: heartbeat`) is sent every 15 seconds
+        (`serve -sse-heartbeat`) while idle. Errors that happen before the
+        stream starts are ordinary JSON error responses. Reconnecting with the
+        last received id resumes without gaps or duplicates.
+      parameters:
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/LastEventID'
+      responses:
+        '200':
+          description: An open event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events as described above.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /metrics:
+    get:
+      tags: [operations]
+      operationId: getMetrics
+      summary: Prometheus metrics
+      description: |
+        Prometheus text exposition format (0.0.4). Requires the admin token;
+        any other token, or none, is a 401. Series: `storecraft_http_requests_total{method,route,status}`,
+        `storecraft_http_request_duration_seconds{route}` (histogram),
+        `storecraft_changes_written_total{op}`, `storecraft_idempotent_replays_total`
+        `storecraft_sse_streams_active`, `storecraft_tenant_usage_keys{tenant_id}`,
+        `storecraft_tenant_usage_bytes{tenant_id}` (the only series with a tenant label),
+        `storecraft_quota_rejections_total{dimension}` and
+        `storecraft_quota_enforcement_enabled` (0 or 1). `route` is the path pattern
+        (for example `/v1/keys/{key}`), or `unmatched`.
+      responses:
+        '200':
+          description: Metrics in the Prometheus text format.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+  /v1/admin/changes:
+    get:
+      tags: [replication]
+      operationId: listAdminChanges
+      summary: Replication feed (all tenants, admin only)
+      description: |
+        Admin token required (a missing or unknown token is a 401, a valid
+        tenant token a 403). Returns the changes of **every** tenant with `seq`
+        greater than `since`, in ascending order, including tenant creation
+        (`kind: tenant`, whose `value` is `{"name","token_hash"}` and whose
+        `key` is the tenant name). Long-polls like `/v1/changes`. `latest_seq`
+        is this node's newest seq, which replicas use to compute lag. This is
+        what a replica pulls; tenant-facing `/v1/changes` never returns tenant
+        records or other tenants' changes. Seq numbers are specific to the node
+        that serves them. `flags` is the current state of the runtime flags
+        (STORE-210); a replica that passes the flag version it holds as
+        `flags_version` is answered at once (possibly with no changes) when
+        that version is out of date, so a flag change reaches it without
+        waiting for the long-poll timeout.
+      parameters:
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Limit'
+        - name: flags_version
+          in: query
+          required: false
+          description: The quota_enforcement flag version the caller holds (replicas send it).
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        '200':
+          description: Changes, possibly empty after a timeout.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminChangesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/replication/status:
+    get:
+      tags: [replication]
+      operationId: getReplicationStatus
+      summary: Replication status (admin only)
+      description: |
+        Admin token required (401 for a missing or unknown token, 403 for a
+        tenant token). On a primary, `role` is `primary` and `applied_seq` and
+        `primary_seq` are both its newest seq (`lag` 0). On a replica,
+        `applied_seq` is the primary's seq of the last change applied,
+        `primary_seq` the newest primary seq the primary has reported, and
+        `lag` their difference.
+      responses:
+        '200':
+          description: Replication status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplicationStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/admin/digest:
+    get:
+      tags: [replication]
+      operationId: getDigest
+      summary: Data digest per tenant (admin only; primary and replica)
+      description: |
+        Admin token required (401 for a missing or unknown token, 403 for a
+        tenant token). Available on primaries and replicas, so their data can be
+        compared (`storecraft verify`). For each tenant: the number of keys, the
+        total length of the values, and a `checksum`, the hex SHA-256 over the
+        keys in byte order, each as `uvarint(len(key)) key | version (8 bytes,
+        big-endian) | SHA-256(value) (32 bytes)`. Values are hashed in compact
+        JSON form (a value that is not valid JSON is hashed as stored), so
+        whitespace differences do not matter. `seq` is the newest change seq on
+        a primary, or `applied_seq` (the primary's seq) on a replica, and always
+        matches the data in the same response; two nodes whose `seq` is equal
+        must report equal digests. With `?tenant=<id>` only that tenant is
+        returned, together with its per-key digests (`entries`).
+        A digest reads every value of the selected tenants.
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: The digest.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/usage:
+    get:
+      tags: [quotas]
+      operationId: getUsage
+      summary: The caller's own usage and limits (tenant token)
+      description: |
+        Tenant token only (the admin token gets 403; admins read any tenant via
+        `/v1/admin/tenants/{id}`). Usage is counted whether or not quota
+        enforcement is on: `keys.used` is the number of stored keys and
+        `bytes.used` the total UTF-8 length of the values in canonical form
+        (compact JSON, no HTML escaping). `limit: null` means unlimited. `seq` is
+        the change-log position the numbers correspond to. Works on replicas
+        (read-only).
+      responses:
+        '200':
+          description: The tenant's usage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/admin/tenants:
+    get:
+      tags: [quotas]
+      operationId: listTenants
+      summary: Every tenant with its quota and usage (admin only)
+      description: |
+        Admin token required (401 for a missing or unknown token, 403 for a
+        tenant token). Tenants are sorted by id. Does not read stored values.
+        Works on replicas (read-only).
+      responses:
+        '200':
+          description: The tenants.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/admin/tenants/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TenantPathID'
+    get:
+      tags: [quotas]
+      operationId: getTenant
+      summary: One tenant with its quota and usage (admin only)
+      responses:
+        '200':
+          description: The tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/admin/tenants/{id}/quota:
+    parameters:
+      - $ref: '#/components/parameters/TenantPathID'
+    get:
+      tags: [quotas]
+      operationId: getQuota
+      summary: A tenant's quota (admin only)
+      description: |
+        A tenant whose quota was never edited has the default quota (1000 keys,
+        1048576 bytes) at version 0. The `ETag` header is the version.
+      responses:
+        '200':
+          description: The quota.
+          headers:
+            ETag:
+              $ref: '#/components/headers/VersionETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quota'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+    put:
+      tags: [quotas]
+      operationId: putQuota
+      summary: Set a tenant's quota (admin only, compare-and-swap)
+      description: |
+        `If-Match` with the current version is required: missing is 428
+        `precondition_required`, stale is 412 `precondition_failed`. Use
+        `If-Match: "0"` for a tenant whose quota was never edited. Both fields are
+        required; `null` means unlimited. A quota may be set below current usage:
+        the tenant is then over quota (growing writes rejected, deletes and
+        shrinking writes allowed). Primary only (409 on a replica).
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuotaUpdate'
+      responses:
+        '200':
+          description: The new quota.
+          headers:
+            ETag:
+              $ref: '#/components/headers/VersionETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quota'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/ReadOnlyReplica'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/flags:
+    get:
+      tags: [quotas]
+      operationId: getFlags
+      summary: Runtime feature flags (tenant or admin token)
+      description: |
+        `quota_enforcement` off means no `quota_exceeded` rejections (usage is
+        still counted) and the console hides the quota feature. Default: off.
+        Works on replicas (the value replicated from the primary).
+      responses:
+        '200':
+          description: The flags.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flags'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/admin/flags/quota_enforcement:
+    put:
+      tags: [quotas]
+      operationId: putQuotaEnforcement
+      summary: Turn quota enforcement on or off (admin only, compare-and-swap)
+      description: |
+        Takes effect for the next request, with no restart. `If-Match` with the
+        current version is required (428 when missing, 412 when stale; version 0
+        before the first change). Primary only (409 on a replica).
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FlagUpdate'
+      responses:
+        '200':
+          description: The new flag state.
+          headers:
+            ETag:
+              $ref: '#/components/headers/VersionETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/ReadOnlyReplica'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/Internal'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A tenant token (key and change routes) or the admin token (`/metrics`).
+  parameters:
+    Key:
+      name: key
+      in: path
+      required: true
+      description: |
+        The key. Slashes are allowed inside a key (for example
+        `/v1/keys/app/config/theme`).
+      schema:
+        type: string
+    Prefix:
+      name: prefix
+      in: query
+      required: false
+      description: Return only keys that start with this prefix (matched literally).
+      schema:
+        type: string
+    Since:
+      name: since
+      in: query
+      required: false
+      description: Return changes with seq greater than this. A non-negative integer; default 0.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        default: 0
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum changes to return. A positive integer; values above 500 are treated as 500.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    TenantID:
+      name: tenant
+      in: query
+      required: false
+      description: Return only this tenant (a positive integer id), with its per-key digests.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    LastEventID:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: |
+        The id of the last event received. Resumes the stream after that seq;
+        wins over `since` when both are given.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    TenantPathID:
+      name: id
+      in: path
+      required: true
+      description: The tenant id (a positive integer; anything else is a 400).
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    IfMatchRequired:
+      name: If-Match
+      in: header
+      required: true
+      description: |
+        The current version, optionally quoted (for example `"3"`). Missing is
+        428 `precondition_required`; a different version is 412
+        `precondition_failed`. Version 0 means "never edited" (the default).
+      schema:
+        type: string
+        example: '"0"'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        A version number, optionally quoted. The write succeeds only if the key
+        exists at exactly this version; otherwise 412 `precondition_failed`.
+        Cannot be combined with `If-None-Match`.
+      schema:
+        type: string
+        example: '"3"'
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: |
+        Only `*` is accepted: create the key only if it does not exist,
+        otherwise 412 `precondition_failed`.
+      schema:
+        type: string
+        enum: ['*']
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        1 to 255 printable ASCII characters, no spaces. Scoped per tenant.
+        Repeating the same method, path and body returns the stored 2xx response
+        (header `Idempotent-Replayed: true`) without writing again; reusing the
+        key with a different method, path or body is a 422 `idempotency_conflict`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+  headers:
+    ETag:
+      description: The key's version as a quoted string, for example `"3"`.
+      schema:
+        type: string
+    VersionETag:
+      description: The quota or flag version as a quoted string, for example `"3"`. Send it back in `If-Match`.
+      schema:
+        type: string
+    Allow:
+      description: Methods the path supports.
+      schema:
+        type: string
+    WWWAuthenticate:
+      description: Always `Bearer`.
+      schema:
+        type: string
+    IdempotentReplayed:
+      description: '`true` when the response was replayed from a stored idempotent response.'
+      schema:
+        type: string
+        enum: ['true']
+  responses:
+    BadRequest:
+      description: |
+        `invalid_request`: invalid JSON, a missing `value` field, a body over
+        1 MiB, a bad `since`, `limit`, `Last-Event-ID`, `If-Match`,
+        `If-None-Match` or `Idempotency-Key`. Nothing is changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: '`unauthorized`: the bearer token is missing or invalid.'
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: '`forbidden`: the admin token cannot access tenant data.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ForbiddenOrQuotaExceeded:
+      description: |
+        Two cases share this status; tell them apart by `error.code`:
+        `forbidden` (the admin token cannot access tenant data) or
+        `quota_exceeded` (quota enforcement is on and this write would exceed the
+        tenant's key or byte quota; nothing was written; `error.details` says which
+        limit, how much is used, the limit and what the write would add).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: quota_exceeded
+              message: This write needs 2048 more bytes, but 1047000 of 1048576 bytes are used.
+              details:
+                dimension: bytes
+                used: 1047000
+                limit: 1048576
+                requested: 2048
+    PreconditionRequired:
+      description: '`precondition_required`: this write needs an `If-Match` header with the current version.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: '`not_found`: no such key, tenant or route.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MethodNotAllowed:
+      description: '`method_not_allowed`: returned, with an `Allow` header, when any other method is used on this path.'
+      headers:
+        Allow:
+          $ref: '#/components/headers/Allow'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ReadOnlyReplica:
+      description: |
+        `read_only_replica`: this node is a read-only replica; send writes to
+        the primary. Returned after authentication (an unauthenticated caller
+        still gets 401). Nothing is changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PreconditionFailed:
+      description: '`precondition_failed`: `If-Match` did not match the key''s version, or `If-None-Match: *` found an existing key.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    IdempotencyConflict:
+      description: '`idempotency_conflict`: the Idempotency-Key was already used with a different method, path or body.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Internal:
+      description: '`internal`: unexpected server error; no internal details are returned.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - unauthorized
+                - forbidden
+                - not_found
+                - invalid_request
+                - precondition_failed
+                - method_not_allowed
+                - idempotency_conflict
+                - read_only_replica
+                - quota_exceeded
+                - precondition_required
+                - internal
+            message:
+              type: string
+            details:
+              $ref: '#/components/schemas/QuotaExceededDetails'
+      example:
+        error:
+          code: not_found
+          message: key not found
+    QuotaExceededDetails:
+      type: object
+      description: Present on `quota_exceeded` errors only.
+      required: [dimension, used, limit, requested]
+      properties:
+        dimension:
+          type: string
+          enum: [keys, bytes]
+          description: Which limit the write would break (`keys` when both would).
+        used:
+          type: integer
+          format: int64
+          description: Current usage in that dimension.
+        limit:
+          type: integer
+          format: int64
+          description: The limit in that dimension.
+        requested:
+          type: integer
+          format: int64
+          description: What the write would add (1 for a new key, or the byte difference).
+    UsageCounter:
+      type: object
+      required: [used, limit]
+      properties:
+        used:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+          format: int64
+          nullable: true
+          description: The quota in this dimension; null means unlimited.
+    Usage:
+      type: object
+      required: [tenant_id, keys, bytes, seq]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        keys:
+          $ref: '#/components/schemas/UsageCounter'
+        bytes:
+          $ref: '#/components/schemas/UsageCounter'
+        seq:
+          type: integer
+          format: int64
+          description: The change-log position these numbers correspond to.
+    Quota:
+      type: object
+      required: [max_keys, max_bytes, version]
+      properties:
+        max_keys:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: Maximum number of keys; null means unlimited.
+        max_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: Maximum total value bytes (canonical form); null means unlimited.
+        version:
+          type: integer
+          format: int64
+          description: 0 until the quota is first edited (default quota).
+    QuotaUpdate:
+      type: object
+      required: [max_keys, max_bytes]
+      additionalProperties: false
+      properties:
+        max_keys:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+        max_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+    TenantUsage:
+      type: object
+      required: [keys, bytes]
+      properties:
+        keys:
+          type: integer
+          format: int64
+        bytes:
+          type: integer
+          format: int64
+    TenantSummary:
+      type: object
+      required: [id, name, quota, usage]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        quota:
+          $ref: '#/components/schemas/Quota'
+        usage:
+          $ref: '#/components/schemas/TenantUsage'
+    TenantList:
+      type: object
+      required: [tenants]
+      properties:
+        tenants:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantSummary'
+    Flag:
+      type: object
+      required: [enabled, version]
+      properties:
+        enabled:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+          description: 0 until the flag is first changed.
+    Flags:
+      type: object
+      required: [quota_enforcement]
+      properties:
+        quota_enforcement:
+          $ref: '#/components/schemas/Flag'
+    FlagUpdate:
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+    PutRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          description: Any JSON value (including null). The field must be present.
+    PutResponse:
+      type: object
+      required: [key, version]
+      properties:
+        key:
+          type: string
+        version:
+          type: integer
+          format: int64
+    Entry:
+      type: object
+      required: [key, value, version]
+      properties:
+        key:
+          type: string
+        value:
+          description: The stored JSON value.
+        version:
+          type: integer
+          format: int64
+    ListResponse:
+      type: object
+      required: [keys, seq]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entry'
+        seq:
+          type: integer
+          format: int64
+          description: |
+            This node's newest change seq at the moment the list was read (from
+            the same snapshot as `keys`). Pass it as `since` to
+            `/v1/changes` or `/v1/changes/stream` to receive exactly the
+            changes made after this list, with no gap and no repeats.
+    Change:
+      type: object
+      required: [seq, key, op, version, value, value_size, ts]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: Position in the change log. Increases with commit order; not necessarily contiguous for one tenant.
+        key:
+          type: string
+        op:
+          type: string
+          enum: [put, delete]
+        version:
+          type: integer
+          format: int64
+          description: The version written (put) or the version that was deleted (delete).
+        value:
+          nullable: true
+          description: The JSON value for a put; null for a delete.
+        value_size:
+          type: integer
+          format: int64
+          description: Size in bytes of the stored value (0 for a delete).
+        ts:
+          type: string
+          format: date-time
+    AdminChange:
+      type: object
+      required: [seq, tenant_id, kind, key, op, version, value, value_size, ts]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: Position in this node's change log (global across tenants and contiguous).
+        tenant_id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [key, tenant]
+          description: '`key` for a write to a tenant key; `tenant` for tenant creation.'
+        key:
+          type: string
+          description: The key, or the tenant name when kind is `tenant`.
+        op:
+          type: string
+          enum: [put, delete]
+        version:
+          type: integer
+          format: int64
+        value:
+          nullable: true
+          description: |
+            The JSON value for a put; null for a delete. For kind `tenant`:
+            `{"name","token_hash"}` (tenant creation), or, when `subject` is
+            `quota`, `{"max_keys","max_bytes","version"}`.
+        value_size:
+          type: integer
+          format: int64
+        subject:
+          type: string
+          nullable: true
+          description: |
+            What a `tenant` row is about: absent/null for tenant creation,
+            `quota` for a quota change. Older replicas ignore it.
+        ts:
+          type: string
+          format: date-time
+    AdminChangesResponse:
+      type: object
+      required: [changes, last_seq, latest_seq]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminChange'
+        last_seq:
+          type: integer
+          format: int64
+          description: The highest seq returned, or `since` if there were none.
+        latest_seq:
+          type: integer
+          format: int64
+          description: This node's newest seq.
+        flags:
+          $ref: '#/components/schemas/Flags'
+    KeyDigest:
+      type: object
+      required: [key, version, sha256]
+      properties:
+        key:
+          type: string
+        version:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+          description: Hex SHA-256 of the value in compact JSON form.
+    TenantDigest:
+      type: object
+      required: [tenant_id, name, keys, value_bytes, checksum]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          description: The tenant name (empty if keys exist for an id that has no tenant record).
+        keys:
+          type: integer
+          format: int64
+        value_bytes:
+          type: integer
+          format: int64
+          description: Total length of the values in compact JSON form.
+        checksum:
+          type: string
+          description: Hex SHA-256 over the sorted (key, version, SHA-256 of value) records.
+        usage:
+          $ref: '#/components/schemas/TenantUsage'
+        quota:
+          $ref: '#/components/schemas/Quota'
+        entries:
+          type: array
+          description: Per-key digests in key order. Present only with `?tenant=`.
+          items:
+            $ref: '#/components/schemas/KeyDigest'
+    DigestResponse:
+      type: object
+      required: [role, seq, tenants]
+      properties:
+        role:
+          type: string
+          enum: [primary, replica]
+        seq:
+          type: integer
+          format: int64
+          description: Newest change seq (primary) or applied_seq (replica); consistent with the data returned.
+        tenants:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantDigest'
+    ReplicationStatus:
+      type: object
+      required: [role, applied_seq, primary_seq, lag]
+      properties:
+        role:
+          type: string
+          enum: [primary, replica]
+        applied_seq:
+          type: integer
+          format: int64
+        primary_seq:
+          type: integer
+          format: int64
+        lag:
+          type: integer
+          format: int64
+          minimum: 0
+    ChangesResponse:
+      type: object
+      required: [changes, last_seq]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Change'
+        last_seq:
+          type: integer
+          format: int64

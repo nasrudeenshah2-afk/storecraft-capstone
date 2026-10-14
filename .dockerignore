@@ -1,0 +1,12 @@
+# Keep the image build context small and free of local state.
+**/node_modules
+web/dist
+web/test-results
+**/*.db
+**/*.db-wal
+**/*.db-shm
+*.exe
+releases
+docs
+demo-tokens.txt
+.claude

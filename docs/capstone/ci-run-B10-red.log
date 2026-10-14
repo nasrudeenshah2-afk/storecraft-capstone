@@ -1,0 +1,37 @@
+[REDACTED COPY: 3 synthetic test tokens printed by a failing test were replaced; nothing else changed]
+storecraft CI  root=C:\Users\NasrudeenShahS\Documents\code\storecraft-capstone
+go: go1.27.0 windows/amd64   node: v24.15.0   npm: 11.12.1
+
+---- gofmt -l (must print nothing)
+checked 10 package folders; all formatted
+[PASS] gofmt -l (must print nothing) (0.5s)
+
+---- go vet ./...
+[PASS] go vet ./... (1.4s)
+
+---- go test -race -count=1 ./...
+demo-1: <synthetic token from a test temp database - redacted, see DONE.md B10>
+demo-2: <synthetic token from a test temp database - redacted, see DONE.md B10>
+demo-3: <synthetic token from a test temp database - redacted, see DONE.md B10>
+--- FAIL: TestVerifyConvergesAfterRestartMidStream (6.12s)
+    clustertest.go:177: replica Run returned applied seq: context canceled on pause, want nil
+FAIL
+FAIL	storecraft/cmd/storecraft	73.725s
+ok  	storecraft/internal/api	109.145s
+ok  	storecraft/internal/auth	2.730s
+?   	storecraft/internal/clustertest	[no test files]
+ok  	storecraft/internal/feed	9.352s
+ok  	storecraft/internal/metrics	2.390s
+ok  	storecraft/internal/metrics/metricstest	4.326s
+ok  	storecraft/internal/replica	24.489s
+ok  	storecraft/internal/store	32.595s
+ok  	storecraft/internal/verify	30.774s
+FAIL
+[FAIL] go test -race -count=1 ./... (144.1s)
+
+================ CI summary ================
+PASS  gofmt -l (must print nothing)           0.5s
+PASS  go vet ./...                            1.4s
+FAIL  go test -race -count=1 ./...          144.1s
+FAIL: 2 of 3 stages passed, total 150.8s
+exit=1

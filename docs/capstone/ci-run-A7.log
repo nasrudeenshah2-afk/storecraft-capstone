@@ -1,0 +1,127 @@
+﻿command: powershell -ExecutionPolicy Bypass -File scripts/ci.ps1
+started: 2026-10-13 21:00:20
+
+storecraft CI  root=C:\Users\NasrudeenShahS\Documents\code\storecraft-capstone
+go: go1.27.0 windows/amd64   node: v24.15.0   npm: 11.12.1
+
+---- gofmt -l (must print nothing)
+checked 10 package folders; all formatted
+[PASS] gofmt -l (must print nothing) (0.6s)
+
+---- go vet ./...
+[PASS] go vet ./... (0.9s)
+
+---- go test -race -count=1 ./...
+ok  	storecraft/cmd/storecraft	27.187s
+ok  	storecraft/internal/api	51.616s
+ok  	storecraft/internal/auth	2.359s
+?   	storecraft/internal/clustertest	[no test files]
+ok  	storecraft/internal/feed	5.585s
+ok  	storecraft/internal/metrics	4.218s
+ok  	storecraft/internal/metrics/metricstest	2.017s
+ok  	storecraft/internal/replica	17.645s
+ok  	storecraft/internal/store	20.088s
+ok  	storecraft/internal/verify	20.658s
+[PASS] go test -race -count=1 ./... (77.2s)
+
+---- web: npm run lint
+
+> storecraft-console@0.1.0 lint
+> eslint --max-warnings 0 .
+
+[PASS] web: npm run lint (9.9s)
+
+---- web: npm run typecheck
+
+> storecraft-console@0.1.0 typecheck
+> vue-tsc --build
+
+[PASS] web: npm run typecheck (9.2s)
+
+---- web: npm run test
+
+> storecraft-console@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.2 C:/Users/NasrudeenShahS/Documents/code/storecraft-capstone/web
+
+
+ Test Files  10 passed (10)
+      Tests  87 passed (87)
+   Start at  21:02:01
+   Duration  8.65s (environment 70%, tests 11%, transform 10%, import 9%, worker 1%)
+
+Environment  jsdom was created 10 times · 31.74s total, 70% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+
+[PASS] web: npm run test (10.8s)
+
+---- web: npm run build
+
+> storecraft-console@0.1.0 build
+> vue-tsc --build && vite build
+
+vite v8.3.1 building client environment for production...
+transforming...
+✓ 59 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.40 kB │ gzip:  0.26 kB
+dist/assets/index-CoTJtkRj.css    6.80 kB │ gzip:  1.94 kB
+dist/assets/index-BVMbqscP.js   105.35 kB │ gzip: 39.68 kB
+
+✓ built in 371ms
+[PASS] web: npm run build (12.3s)
+
+---- web: npm run check:bundle
+
+> storecraft-console@0.1.0 check:bundle
+> node scripts/check-bundle.ts
+
+check:bundle PASS: assets/index-BVMbqscP.js is 102.9 kB (38.3 kB gzip); budget 120.0 kB
+[PASS] web: npm run check:bundle (0.9s)
+
+---- web: npm run e2e
+
+> storecraft-console@0.1.0 e2e
+> playwright test
+
+
+Running 15 tests using 1 worker
+
+(node:2240) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 [chromium] › e2e\conflict.spec.ts:16:1 › a conflicting save shows both values; Overwrite saves mine on top of the latest (1.5s)
+  ✓   2 [chromium] › e2e\conflict.spec.ts:36:1 › Reload continues editing from the latest value; Cancel keeps my text (1.3s)
+  ✓   3 [chromium] › e2e\keys.spec.ts:3:1 › create, edit and delete a key through the console (1.5s)
+  ✓   4 [chromium] › e2e\keys.spec.ts:36:1 › invalid JSON is caught in the form and nothing is sent (1.0s)
+  ✓   5 [chromium] › e2e\live.spec.ts:3:1 › changes from a second browser window appear live, in both directions (4.4s)
+  ✓   6 [chromium] › e2e\live.spec.ts:42:1 › a write made directly through the API appears live (2.5s)
+  ✓   7 [chromium] › e2e\live.spec.ts:57:1 › another tenant's changes never appear (2.1s)
+  ✓   8 [chromium] › e2e\login.spec.ts:5:3 › sign in › a tenant signs in and lands on the keys page, which stays after a refresh (2.4s)
+  ✓   9 [chromium] › e2e\login.spec.ts:17:3 › sign in › choosing the wrong role explains the mix-up and does not sign in (686ms)
+  ✓  10 [chromium] › e2e\login.spec.ts:26:3 › sign in › an admin sees the replication status badge (992ms)
+  ✓  11 [chromium] › e2e\login.spec.ts:35:3 › accessibility (axe) › the login page has no violations (1.7s)
+  ✓  12 [chromium] › e2e\login.spec.ts:42:3 › accessibility (axe) › the keys page, with data and with the editor open, has no violations (3.2s)
+  ✓  13 [chromium] › e2e\login.spec.ts:55:3 › accessibility (axe) › the admin page has no violations (3.6s)
+  ✓  14 [chromium] › e2e\reconnect.spec.ts:4:1 › after the server restarts, the console reconnects and keeps receiving changes (4.7s)
+  ✓  15 [chromium] › e2e\reconnect.spec.ts:30:1 › when streaming is impossible, the console falls back to polling and stays up to date (2.7s)
+
+  15 passed (53.0s)
+[PASS] web: npm run e2e (54.6s)
+
+================ CI summary ================
+PASS  gofmt -l (must print nothing)           0.6s
+PASS  go vet ./...                            0.9s
+PASS  go test -race -count=1 ./...           77.2s
+PASS  web: npm run lint                       9.9s
+PASS  web: npm run typecheck                  9.2s
+PASS  web: npm run test                      10.8s
+PASS  web: npm run build                     12.3s
+PASS  web: npm run check:bundle               0.9s
+PASS  web: npm run e2e                       54.6s
+PASS: 9 of 9 stages passed, total 177.3s
+
+exit code: 0

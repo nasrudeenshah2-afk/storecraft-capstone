@@ -1,0 +1,22 @@
+# Secrets and local state: never commit
+demo-tokens.txt
+demo-pids.json
+demo-logs/
+*.db
+*.db-shm
+*.db-wal
+
+# Binaries and build output
+*.exe
+*.exe~
+releases/*/storecraft.exe
+releases/*/source.zip
+releases/*/web-dist/
+web/dist/
+
+# Dependencies and test output
+web/node_modules/
+web/test-results/
+web/playwright-report/
+web/node_modules/.tmp/
+*.tsbuildinfo

@@ -1,0 +1,145 @@
+﻿storecraft CI  root=C:\Users\NasrudeenShahS\Documents\code\storecraft-capstone
+go: go1.27.0 windows/amd64   node: v24.15.0   npm: 11.12.1
+
+---- gofmt -l (must print nothing)
+checked 10 package folders; all formatted
+[PASS] gofmt -l (must print nothing) (6.1s)
+
+---- go vet ./...
+[PASS] go vet ./... (26.4s)
+
+---- go test -race -count=1 ./...
+ok  	storecraft/cmd/storecraft	67.461s
+ok  	storecraft/internal/api	94.479s
+ok  	storecraft/internal/auth	2.087s
+?   	storecraft/internal/clustertest	[no test files]
+ok  	storecraft/internal/feed	10.151s
+ok  	storecraft/internal/metrics	2.442s
+ok  	storecraft/internal/metrics/metricstest	2.087s
+ok  	storecraft/internal/replica	19.237s
+ok  	storecraft/internal/store	32.198s
+ok  	storecraft/internal/verify	28.833s
+[PASS] go test -race -count=1 ./... (130.7s)
+
+---- web: npm run lint
+
+> storecraft-console@0.1.0 lint
+> eslint --max-warnings 0 .
+
+[PASS] web: npm run lint (70.6s)
+
+---- web: npm run typecheck
+
+> storecraft-console@0.1.0 typecheck
+> vue-tsc --build
+
+[PASS] web: npm run typecheck (24.3s)
+
+---- web: npm run test
+
+> storecraft-console@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.2 C:/Users/NasrudeenShahS/Documents/code/storecraft-capstone/web
+
+
+ Test Files  16 passed (16)
+      Tests  119 passed (119)
+   Start at  23:54:57
+   Duration  62.07s (environment 94%, transform 2%, import 2%, tests 2%)
+
+Environment  jsdom was created 16 times · 386.83s total, 94% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+
+[PASS] web: npm run test (72.5s)
+
+---- web: npm run build
+
+> storecraft-console@0.1.0 build
+> vue-tsc --build && vite build
+
+vite v8.3.1 building client environment for production...
+transforming...
+✓ 72 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.40 kB │ gzip:  0.27 kB
+dist/assets/index-CFfhQpMZ.css    8.41 kB │ gzip:  2.22 kB
+dist/assets/index-Df3SHJe0.js   118.12 kB │ gzip: 43.55 kB
+
+✓ built in 889ms
+[PASS] web: npm run build (12.4s)
+
+---- web: npm run check:bundle
+
+> storecraft-console@0.1.0 check:bundle
+> node scripts/check-bundle.ts
+
+check:bundle PASS: assets/index-Df3SHJe0.js is 115.4 kB (42.1 kB gzip); budget 120.0 kB
+[PASS] web: npm run check:bundle (0.7s)
+
+---- web: npm run e2e
+
+> storecraft-console@0.1.0 e2e
+> playwright test
+
+
+Running 31 tests using 1 worker
+
+powershell : (node:17880) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:302
++ ... tch {} } }; powershell -ExecutionPolicy Bypass -File scripts/ci.ps1 * ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ((node:17880) Wa... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 [chromium] › e2e\conflict.spec.ts:16:1 › a conflicting save shows both values; Overwrite saves mine on top of the latest (1.3s)
+  ✓   2 [chromium] › e2e\conflict.spec.ts:36:1 › Reload continues editing from the latest value; Cancel keeps my text (1.2s)
+  ✓   3 [chromium] › e2e\keys.spec.ts:3:1 › create, edit and delete a key through the console (1.5s)
+  ✓   4 [chromium] › e2e\keys.spec.ts:36:1 › invalid JSON is caught in the form and nothing is sent (973ms)
+  ✓   5 [chromium] › e2e\live.spec.ts:3:1 › changes from a second browser window appear live, in both directions (3.5s)
+  ✓   6 [chromium] › e2e\live.spec.ts:42:1 › a write made directly through the API appears live (2.2s)
+  ✓   7 [chromium] › e2e\live.spec.ts:57:1 › another tenant's changes never appear (2.2s)
+  ✓   8 [chromium] › e2e\login.spec.ts:5:3 › sign in › a tenant signs in and lands on the keys page, which stays after a refresh (2.3s)
+  ✓   9 [chromium] › e2e\login.spec.ts:17:3 › sign in › choosing the wrong role explains the mix-up and does not sign in (711ms)
+  ✓  10 [chromium] › e2e\login.spec.ts:26:3 › sign in › an admin sees the replication status badge (786ms)
+  ✓  11 [chromium] › e2e\login.spec.ts:35:3 › accessibility (axe) › the login page has no violations (1.4s)
+  ✓  12 [chromium] › e2e\login.spec.ts:42:3 › accessibility (axe) › the keys page, with data and with the editor open, has no violations (3.2s)
+  ✓  13 [chromium] › e2e\login.spec.ts:55:3 › accessibility (axe) › the admin page has no violations (1.8s)
+  ✓  14 [chromium] › e2e\quota.spec.ts:46:3 › AC-UI-1 usage meter states › normal: text and an accessible meter for keys and bytes (870ms)
+  ✓  15 [chromium] › e2e\quota.spec.ts:60:3 › AC-UI-1 usage meter states › loading, then error with Try again, then the real numbers (928ms)
+  ✓  16 [chromium] › e2e\quota.spec.ts:85:3 › AC-UI-1 usage meter states › unlimited: the word "unlimited" and no meter value (802ms)
+  ✓  17 [chromium] › e2e\quota.spec.ts:94:3 › AC-UI-1 usage meter states › near limit at 80% or more: "Almost full" in text (2.3s)
+  ✓  18 [chromium] › e2e\quota.spec.ts:102:3 › AC-UI-1 usage meter states › over quota: "Over quota" in text (2.1s)
+  ✓  19 [chromium] › e2e\quota.spec.ts:111:1 › AC-UI-2 the meter follows other clients within 2 seconds, without a reload (3.2s)
+  ✓  20 [chromium] › e2e\quota.spec.ts:133:3 › AC-UI-3 over quota at save › the editor stays open with my text and explains the limit from the error details (2.5s)
+  ✓  21 [chromium] › e2e\quota.spec.ts:158:3 › AC-UI-3 over quota at save › the message comes from the error code, not the server text; forbidden reads differently (1.1s)
+  ✓  22 [chromium] › e2e\quota.spec.ts:192:3 › AC-UI-4 admin quota editor › shows quota and usage, rejects invalid input without sending, saves with If-Match (1.5s)
+  ✓  23 [chromium] › e2e\quota.spec.ts:233:3 › AC-UI-5 quota editor conflict › shows both sides; Cancel keeps my input and returns focus to Save; Esc cancels (3.1s)
+  ✓  24 [chromium] › e2e\quota.spec.ts:259:3 › AC-UI-5 quota editor conflict › Reload loads the latest values; Overwrite saves mine on top of the latest version (1.5s)
+  ✓  25 [chromium] › e2e\quota.spec.ts:282:1 › AC-UI-6 the flag hides and shows the quota feature live in every open console (8.2s)
+  ✓  26 [chromium] › e2e\quota.spec.ts:311:3 › AC-UI-7 admin flag toggle › confirms with the effect, sends If-Match, and shows the new state (1.1s)
+  ✓  27 [chromium] › e2e\quota.spec.ts:327:3 › AC-UI-7 admin flag toggle › a stale toggle (412) asks to reload the current state (999ms)
+  ✓  28 [chromium] › e2e\quota.spec.ts:349:3 › AC-UI-8 keyboard and accessibility › the quota editor works with the keyboard alone; the admin page is axe-clean (2.1s)
+  ✓  29 [chromium] › e2e\quota.spec.ts:364:3 › AC-UI-8 keyboard and accessibility › the keys page is axe-clean with the meter shown (1.9s)
+  ✓  30 [chromium] › e2e\reconnect.spec.ts:4:1 › after the server restarts, the console reconnects and keeps receiving changes (3.7s)
+  ✓  31 [chromium] › e2e\reconnect.spec.ts:30:1 › when streaming is impossible, the console falls back to polling and stays up to date (2.2s)
+
+  31 passed (1.3m)
+[PASS] web: npm run e2e (84.6s)
+
+================ CI summary ================
+PASS  gofmt -l (must print nothing)           6.1s
+PASS  go vet ./...                           26.4s
+PASS  go test -race -count=1 ./...          130.7s
+PASS  web: npm run lint                      70.6s
+PASS  web: npm run typecheck                 24.3s
+PASS  web: npm run test                      72.5s
+PASS  web: npm run build                     12.4s
+PASS  web: npm run check:bundle               0.7s
+PASS  web: npm run e2e                       84.6s
+PASS: 9 of 9 stages passed, total 434.1s
+exit=0
