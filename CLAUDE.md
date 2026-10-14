@@ -60,7 +60,7 @@ storecraft is a multi-tenant key-value service written in Go, backed by SQLite. 
 - Docker base images (A7, pinned): `golang:1.27.0-alpine`, `alpine:3.22.6`, `node:24.15.0-alpine`, `nginx:1.29.8-alpine`.
 
 ## Prohibited
-- No Makefile. Git is used since 2026-10-14 (GitHub: nasrudeenshah2/storecraft-capstone, at the user's request); `.gitignore` keeps tokens, databases, binaries, node_modules and build output out of the repository. Never commit `demo-tokens.txt` or any token. Snapshots in `releases/` are still the release record.
+- No Makefile. Git is used since 2026-10-14 (GitHub: nasrudeenshah2-afk/storecraft-capstone, at the user's request); `.gitignore` keeps tokens, databases, binaries, node_modules and build output out of the repository. Never commit `demo-tokens.txt` or any token. Snapshots in `releases/` are still the release record.
 - Never stop a process by name; only by a recorded PID (see `demo-down.ps1`).
 - Never weaken, skip, or delete tests to make them pass; fix the code.
 - No dependencies beyond the approved list; no CGO.
